@@ -1,31 +1,35 @@
-name: Deploy SBOMs to DependencyTrack for Multiple Repositories
+name: Deploy Multiple SBOMs to DependencyTrack
 
 on:
   workflow_dispatch:
-  pull_request:
+  push:
     branches: [ "main" ]
 
-permissions:
-  contents: read
-  actions: write
-
-env:
-  DEPENDENCYTRACK_SERVER: 'api.dependencytrack.open-elements.cloud'
-
 jobs:
-  build-and-deploy-sbom:
+  prepare:
     runs-on: ubuntu-latest
-    if: ${{ needs.setup.outputs.repos != '' }}
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read repos.json and convert to matrix
+        id: set-matrix
+        run: |
+          JSON=$(cat repos.json | jq -c)
+          echo "matrix=$JSON" >> $GITHUB_OUTPUT
+
+  build-and-upload:
+    needs: prepare
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        repo: ${{ fromJson(needs.setup.outputs.repos) }}
-    needs: setup
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ matrix.repo.url }}
-          path: ${{ matrix.repo.name }}
+      - name: Clone repo ${{ matrix.name }}
+        run: git clone ${{ matrix.url }} ${{ matrix.name }}
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -34,49 +38,19 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Build with Maven
-        working-directory: ${{ matrix.repo.name }}
-        run: mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom --debug
-
-      - name: Check SBOM Existence
-        working-directory: ${{ matrix.repo.name }}
+      - name: Generate SBOM
+        working-directory: ./${{ matrix.name }}
         run: |
-          if [ ! -f target/bom.xml ]; then
-            echo "Error: SBOM file (target/bom.xml) not found!"
-            exit 1
-          fi
+          chmod +x ./mvnw || true
+          ./mvnw clean verify
+          ./mvnw org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
 
-      - name: Deploy SBOM to DependencyTrack
+      - name: Upload SBOM to DependencyTrack
         uses: DependencyTrack/gh-upload-sbom@v3
         with:
-          serverHostname: ${{ env.DEPENDENCYTRACK_SERVER }}
+          serverHostname: 'api.dependencytrack.open-elements.cloud'
           apiKey: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-          projectName: ${{ matrix.repo.name }}
+          projectName: ${{ matrix.name }}
           projectVersion: 'main'
-          bomFilename: "${{ matrix.repo.name }}/target/bom.xml"
+          bomFilename: "${{ matrix.name }}/target/bom.xml"
           autoCreate: true
-
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      repos: ${{ steps.set-repos.outputs.repos }}
-    steps:
-      - name: Checkout Main Repository
-        uses: actions/checkout@v4
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Validate and Read repos.json
-        id: set-repos
-        run: |
-          if [ ! -f repos.json ]; then
-            echo "Error: repos.json not found!"
-            exit 1
-          fi
-          if ! jq . repos.json > /dev/null; then
-            echo "Error: repos.json contains invalid JSON!"
-            cat repos.json
-            exit 1
-          fi
-          echo "repos=$(cat repos.json)" >> $GITHUB_OUTPUT
