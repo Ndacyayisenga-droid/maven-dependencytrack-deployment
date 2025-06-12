@@ -15,7 +15,7 @@ env:
 jobs:
   build-and-deploy-sbom:
     runs-on: ubuntu-latest
-    if: ${{ needs.setup.outputs.repos != '' }} # Only run if repos.json is valid
+    if: ${{ needs.setup.outputs.repos != '' }}
     strategy:
       matrix:
         repo: ${{ fromJson(needs.setup.outputs.repos) }}
