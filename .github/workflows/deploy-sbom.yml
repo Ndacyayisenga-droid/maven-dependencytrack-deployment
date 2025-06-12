@@ -23,43 +23,31 @@ jobs:
       - name: Read Repository List
         id: read-repos
         run: |
-          REPOS_JSON=$(jq -c '.' repos.json)
-          echo "REPOS_JSON=$REPOS_JSON" >> $GITHUB_ENV
+          echo "repos=$(jq -c '.' repos.json)" >> $GITHUB_OUTPUT
 
-      - name: Clone, Generate, and Upload SBOMs
+      - name: Process Repositories
         env:
           DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-          GH_TOKEN: ${{ github.token }}  # Add GH_TOKEN here
         run: |
-          echo "$REPOS_JSON" | jq -c '.[]' | while read -r repo; do
+          echo '${{ steps.read-repos.outputs.repos }}' | jq -c '.[]' | while read -r repo; do
             repo_name=$(echo "$repo" | jq -r '.name')
             repo_url=$(echo "$repo" | jq -r '.url')
-
-            echo "➡️ Cloning $repo_name from $repo_url"
-            git clone "$repo_url" || continue
-            cd "$repo_name" || continue
-
-            echo "Generating SBOM for $repo_name"
+            echo "Processing $repo_name..."
+            git clone "$repo_url" || true
+            cd "$repo_name" || true
             mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom || true
-
-            if [[ -f "target/bom.xml" ]]; then
-              echo "Uploading SBOM for $repo_name"
-              gh workflow run gh-upload-sbom.yml \
-                --repo DependencyTrack/gh-upload-sbom \
-                --ref v3 \
-                -f serverHostname=api.dependencytrack.open-elements.cloud \
-                -f apiKey=${DEPENDENCYTRACK_API_KEY} \
-                -f projectName=${repo_name} \
-                -f projectVersion=master \
-                -f bomFilename=target/bom.xml \
-                -f autoCreate=true || echo "Upload failed for $repo_name"
-            else
-              echo "⚠️ SBOM not found for $repo_name"
-            fi
-
-            cd ..
+            echo "Completed $repo_name"
+            echo "Uploading SBOM for $repo_name..."
+            echo "REPO_NAME=$repo_name" >> $GITHUB_ENV
+            echo "BOM_FILENAME=$repo_name/target/bom.xml" >> $GITHUB_ENV
+            echo "::group::Upload SBOM for $repo_name"
+            ${{ runner.tool_cache }}/node/bin/npx @dependencytrack/gh-upload-sbom@3 \
+              --serverHostname api.dependencytrack.open-elements.cloud \
+              --apiKey ${{ secrets.DEPENDENCYTRACK_API_KEY }} \
+              --projectName "$repo_name" \
+              --projectVersion main \
+              --bomFilename "$repo_name/target/bom.xml" \
+              --autoCreate true || true
+            echo "::endgroup::"
+            cd .. || true
           done
-
-      - name: Clean up workspace
-        run: |
-          echo "$REPOS_JSON" | jq -r '.[].name' | xargs rm -rf
