@@ -1,53 +1,72 @@
-name: Deploy SBOMs to DependencyTrack
+name: Deploy SBOMs to DependencyTrack for Multiple Repositories
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  actions: write
+
+env:
+  DEPENDENCYTRACK_SERVER: 'api.dependencytrack.open-elements.cloud'
+
 jobs:
-  sbom:
+  build-and-deploy-sbom:
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        repo: ${{ fromJson(needs.setup.outputs.repos) }}
+
+    needs: setup
+
     steps:
-      - name: Checkout Main Project
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo.url }}
+          path: ${{ matrix.repo.name }}
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
+          cache: maven
 
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Build with Maven
+        working-directory: ${{ matrix.repo.name }}
+        run: mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom --debug
 
-      - name: Read Repository List
-        id: read-repos
+      - name: Check SBOM Existence
+        working-directory: ${{ matrix.repo.name }}
         run: |
-          echo "repos=$(jq -c '.[]' repos.json)" >> $GITHUB_OUTPUT
-
-      - name: Process Repositories
-        env:
-          DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-        run: |
-          for repo in ${{ steps.read-repos.outputs.repos }}; do
-            repo_name=$(echo "$repo" | jq -r '.name')
-            repo_url=$(echo "$repo" | jq -r '.url')
-            echo "Processing $repo_name..."
-            git clone "$repo_url" || true
-            cd "$repo_name" || true
-            mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom || true
-            echo "Completed $repo_name"
-          done
+          if [ ! -f target/bom.xml ]; then
+            echo "Error: SBOM file (target/bom.xml) not found!"
+            exit 1
+          fi
 
       - name: Deploy SBOM to DependencyTrack
         uses: DependencyTrack/gh-upload-sbom@v3
         with:
-          serverHostname: 'api.dependencytrack.open-elements.cloud'
+          serverHostname: ${{ env.DEPENDENCYTRACK_SERVER }}
           apiKey: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
-          projectName: ${{ env.REPO_NAME }}
+          projectName: ${{ matrix.repo.name }}
           projectVersion: 'main'
-          bomFilename: "${{ env.REPO_NAME }}/target/bom.xml"
+          bomFilename: "${{ matrix.repo.name }}/target/bom.xml"
           autoCreate: true
-        env:
-          REPO_NAME: ${{ env.repo_name }}
+
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.set-repos.outputs.repos }}
+    steps:
+      - name: Checkout Main Repository
+        uses: actions/checkout@v4
+
+      - name: Read repos.json
+        id: set-repos
+        run: |
+          echo "repos=$(cat repos.json)" >> $GITHUB_OUTPUT
