@@ -7,6 +7,9 @@ on:
 jobs:
   sbom:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write  # For accessing repository and triggering actions
+      contents: read  # For reading repository contents
     steps:
       - name: Checkout Main Project
         uses: actions/checkout@v4
@@ -23,31 +26,42 @@ jobs:
       - name: Read Repository List
         id: read-repos
         run: |
-          echo "repos=$(jq -c '.' repos.json)" >> $GITHUB_OUTPUT
+          REPOS_JSON=$(jq -c '.' repos.json)
+          echo "REPOS_JSON=$REPOS_JSON" >> $GITHUB_ENV
 
-      - name: Process Repositories
+      - name: Clone, Generate, and Upload SBOMs
         env:
           DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
         run: |
-          echo '${{ steps.read-repos.outputs.repos }}' | jq -c '.[]' | while read -r repo; do
+          echo "$REPOS_JSON" | jq -c '.[]' | while read -r repo; do
             repo_name=$(echo "$repo" | jq -r '.name')
             repo_url=$(echo "$repo" | jq -r '.url')
-            echo "Processing $repo_name..."
-            git clone "$repo_url" || true
-            cd "$repo_name" || true
-            mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom || true
-            echo "Completed $repo_name"
-            echo "Uploading SBOM for $repo_name..."
-            echo "REPO_NAME=$repo_name" >> $GITHUB_ENV
-            echo "BOM_FILENAME=$repo_name/target/bom.xml" >> $GITHUB_ENV
-            echo "::group::Upload SBOM for $repo_name"
-            ${{ runner.tool_cache }}/node/bin/npx @dependencytrack/gh-upload-sbom@3 \
-              --serverHostname api.dependencytrack.open-elements.cloud \
-              --apiKey ${{ secrets.DEPENDENCYTRACK_API_KEY }} \
-              --projectName "$repo_name" \
-              --projectVersion main \
-              --bomFilename "$repo_name/target/bom.xml" \
-              --autoCreate true || true
-            echo "::endgroup::"
-            cd .. || true
+
+            echo "➡️ Cloning $repo_name from $repo_url"
+            git clone "$repo_url" || continue
+            cd "$repo_name" || continue
+
+            echo "Generating SBOM for $repo_name"
+            mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom || echo "SBOM generation failed for $repo_name"
+
+            if [[ -f "target/bom.xml" ]]; then
+              echo "Uploading SBOM for $repo_name..."
+              curl -X POST \
+                -H "Content-Type: multipart/form-data" \
+                -H "X-API-Key: $DEPENDENCYTRACK_API_KEY" \
+                -F "projectName=$repo_name" \
+                -F "projectVersion=main" \
+                -F "autoCreate=true" \
+                -F "bom=@target/bom.xml" \
+                https://api.dependencytrack.open-elements.cloud/api/v1/bom 2>/tmp/upload_error.log || { echo "Upload failed for $repo_name"; cat /tmp/upload_error.log; }
+              echo "Completed $repo_name"
+            else
+              echo "⚠️ SBOM not found for $repo_name"
+            fi
+
+            cd ..
           done
+
+      - name: Clean up workspace
+        run: |
+          echo "$REPOS_JSON" | jq -r '.[].name' | xargs rm -rf
