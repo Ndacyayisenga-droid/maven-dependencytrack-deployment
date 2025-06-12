@@ -10,7 +10,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - name: Checkout
+      - name: Checkout this repo
         uses: actions/checkout@v4
 
       - name: Read repos.json and convert to matrix
@@ -37,12 +37,9 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
-      - name: Generate SBOM
+      - name: Generate SBOM using CycloneDX
         working-directory: ./${{ matrix.name }}
-        run: |
-          chmod +x ./mvnw || true
-          ./mvnw clean verify
-          ./mvnw org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
+        run: mvn org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom
 
       - name: Upload SBOM to DependencyTrack
         uses: DependencyTrack/gh-upload-sbom@v3
