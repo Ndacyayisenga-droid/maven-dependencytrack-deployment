@@ -24,13 +24,12 @@ jobs:
         id: read-repos
         run: |
           REPOS_JSON=$(jq -c '.' repos.json)
-          echo "REPOS_JSON<<EOF" >> $GITHUB_ENV
-          echo "$REPOS_JSON" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          echo "REPOS_JSON=$REPOS_JSON" >> $GITHUB_ENV
 
       - name: Clone, Generate, and Upload SBOMs
         env:
           DEPENDENCYTRACK_API_KEY: ${{ secrets.DEPENDENCYTRACK_API_KEY }}
+          GH_TOKEN: ${{ github.token }}  # Add GH_TOKEN here
         run: |
           echo "$REPOS_JSON" | jq -c '.[]' | while read -r repo; do
             repo_name=$(echo "$repo" | jq -r '.name')
@@ -61,7 +60,6 @@ jobs:
             cd ..
           done
 
-      # Optional: Clean up cloned repos
       - name: Clean up workspace
         run: |
           echo "$REPOS_JSON" | jq -r '.[].name' | xargs rm -rf
