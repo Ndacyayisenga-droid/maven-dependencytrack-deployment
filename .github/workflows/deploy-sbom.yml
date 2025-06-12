@@ -50,7 +50,7 @@ jobs:
                 -f serverHostname=api.dependencytrack.open-elements.cloud \
                 -f apiKey=${DEPENDENCYTRACK_API_KEY} \
                 -f projectName=${repo_name} \
-                -f projectVersion=main \
+                -f projectVersion=master \
                 -f bomFilename=target/bom.xml \
                 -f autoCreate=true || echo "Upload failed for $repo_name"
             else
