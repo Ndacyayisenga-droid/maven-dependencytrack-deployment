@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+        include: ${{ fromJson(needs.read-repos.outputs.matrix) }}
 
     steps:
       - name: Clone repo ${{ matrix.name }}
