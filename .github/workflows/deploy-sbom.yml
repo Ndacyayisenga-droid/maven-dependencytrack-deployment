@@ -1,11 +1,11 @@
-name: Deploy Multiple SBOMs to DependencyTrack
+name: Deploy SBOMs to DependencyTrack
 
 on:
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  prepare:
+  read-repos:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -19,8 +19,8 @@ jobs:
           JSON=$(cat repos.json | jq -c)
           echo "matrix=$JSON" >> $GITHUB_OUTPUT
 
-  build-and-upload:
-    needs: prepare
+  build-and-upload-sboms:
+    needs: read-repos
     runs-on: ubuntu-latest
     strategy:
       matrix:
