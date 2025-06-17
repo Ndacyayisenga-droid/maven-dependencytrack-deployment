@@ -20,10 +20,6 @@
       "url": "https://github.com/apache/maven.git"
     },
     {
-      "name": "maven-integration-testing",
-      "url": "https://github.com/apache/maven-integration-testing.git"
-    },
-    {
       "name": "maven-mvnd",
       "url": "https://github.com/apache/maven-mvnd.git"
     },
